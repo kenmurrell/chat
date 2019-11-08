@@ -1,61 +1,68 @@
-from socket import AF_INET, socket, SOCK_STREAM
 from threading import Thread
-import socket as sock_base
+import socket
 import logging
 
-format_string = "%(asctime)s %(message)s"
+class Server(object):
 
-logging.basicConfig(format=format_string, level=logging.INFO, datefmt="%H:%M:%S")
-logger = logging.getLogger("log")
+    def __init__(self, host='', port=30000):
+        format_str = "%(asctime)s %(message)s"
+        logging.basicConfig(format=format_str, level=logging.INFO, datefmt="%H:%M:%S")
+        self.logger = logging.getLogger("log")
+        self.host = host
+        self.port = port
+        self.buffer = 1024
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.active_clients = list()
+        self.name_map = dict()
 
-clients={}
-addresses={}
+    def accept_connections(self):
+        while True:
+            client_socket, _ = self.server_socket.accept()
+            self.active_clients.append(client_socket)
+            self.logger.info("%s:%s has connected" % client_socket.getsockname())
+            self.send(client_socket, "SERVER", "Please enter your name to continue")
+            client_name = client_socket.recv(self.buffer).decode("utf8")
+            self.name_map[client_socket] = client_name
+            self.broadcast("SERVER", "%s has joined" % client_name)
+            self.send(client_socket, "SERVER", "Welcome to the server %s!. Type {quit} to exit" % client_name)
+            Thread(target=self.handle_client, args=(client_socket,)).start()
 
-HOST = ''
-PORT = 33000
-BUFSIZ = 1024
-ADDR = (HOST, PORT)
-SERVER = socket(AF_INET, SOCK_STREAM)
-SERVER.setsockopt(sock_base.SOL_SOCKET, sock_base.SO_REUSEADDR, 1)
-SERVER.bind(ADDR)
+    def handle_client(self,client_socket):
+        while True:
+            text = client_socket.recv(self.buffer).decode("utf8")
+            if text == "{quit}":
+                self.kick(client_socket)
+                break
+            else:
+                self.broadcast(self.name_map[client_socket], text)
 
-def accept_connections():
-    while True:
-        client, client_address = SERVER.accept()
-        addresses[client] = client_address
-        logger.info("%s:%s has connected" % client_address)
-        send_personal(client,"Please enter your name to continue")
-        Thread(target=handle_client, args=(client,)).start()
+    def kick(self,client_socket):
+        client_name = self.name_map[client_socket]
+        del self.name_map[client_socket]
+        self.active_clients.remove(client_socket)
+        self.logger.info("%s:%s has disconnected" % client_socket.getsockname())
+        client_socket.close()
+        self.broadcast("%s has left" % client_name, "SERVER")
 
-def handle_client(client):
-    name = client.recv(BUFSIZ).decode("utf8")
-    send_personal(client,"Welcome %s to the server. Type {quit} to exit" % name)
-    broadcast("%s has joined" % name, "SERVER")
-    clients[client] = name
-    while True:
-        msg = client.recv(BUFSIZ).decode("utf8")
-        if msg == "{quit}":
-            del clients[client]
-            logger.info("%s:%s has left the server" % addresses[client])
-            broadcast("%s has left" % name, "SERVER")
-            client.close()
-            break
-        else:
-            broadcast(msg, name)
+    def send(self, client_socket, sender, text):
+        msg = sender + "> " + text
+        client_socket.send(msg.encode("utf8"))
 
-def broadcast(text, prefix):
-    for client in clients:
-        msg = prefix + "> " + text
-        client.send(msg.encode("utf8"))
+    def broadcast(self, sender, text):
+        for client_socket in self.active_clients:
+            self.send(client_socket, sender, text)
 
-def send_personal(client, text):
-    msg = "SERVER" + "> " + text
-    client.send(msg.encode("utf8"))
+    def start(self):
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind((self.host,self.port))
+        self.server_socket.listen(5)
+        print("Waiting for connection...")
+        thread = Thread(target=self.accept_connections)
+        thread.start()
+        thread.join()
+        self.server_socket.close()
 
 if __name__ == "__main__":
-    SERVER.listen(5)  # Listens for 5 connections at max.
-    print("Waiting for connection...")
-    ACCEPT_THREAD = Thread(target=accept_connections)
-    ACCEPT_THREAD.start()  # Starts the infinite loop.
-    ACCEPT_THREAD.join()
-    SERVER.close()
+    server = Server()
+    server.start()

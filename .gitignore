@@ -1,0 +1,6 @@
+# Byte-compiled / optimized
+__pycache__/
+*$py.class
+
+# Server logs
+*.log

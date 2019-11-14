@@ -1,2 +1,2 @@
 # chat
-A basic chat app in python
+A basic, unencrypted LAN chat in python
